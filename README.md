@@ -17,6 +17,8 @@ The script does **not** start immediately upon launch. It is designed to wait fo
 * **Loop Start:** The script constantly searches for the **`popup.png`** (the "Back to Home" button). Once found, it clicks the button, waits briefly for the village to load, and the main automated loop begins.
 * **No Blind Clicks:** Every click on a game element happens only after that element was actually found on screen. If nothing is found, the script waits and clicks nothing.
 * **Window Must Stay Visible:** All image searches are limited to the Clash of Clans window. The window may sit on any monitor, but it must not be minimized or fully covered by another window, because ImageSearch can only see what is visible on screen.
+* **Window Must Stay Put:** The script remembers the position and size of the Clash of Clans window when you press `F2`. If the window is moved, resized, minimized, closed, or if another window covers the point about to be clicked, the run stops with the reason in the log. It does not keep clicking at coordinates that no longer mean anything.
+* **Stoppable Everywhere:** `F2` also takes effect inside a wait and during an attack, and a stop never leaves a mouse button held down.
 
 ### 2. Main Automated Cycle
 
@@ -66,6 +68,7 @@ For the script to function correctly, precise image recognition is required. The
     * It targets the window handle **`ahk_class CROSVM_1 ahk_exe crosvm.exe`**, which is the default name used by Google Play Games for the COC window.
     * If you experience issues, you may need to confirm this window title is correct on your system and adjust the `TargetWin` variable in the code.
 2.  **AutoHotkey:** The main script file (`COC_wall_upgrade_script.ahk`) requires **AutoHotkey v1** to run. It will not run under AutoHotkey v2.
+    * **`logic.ahk` must sit in the same folder as the script**, because the script includes it. It holds the decision logic that does not touch the screen.
     * **The committed `COC_wall_upgrade_script.exe` is an older compiled build and does not contain current fixes.** Run the `.ahk` file with AutoHotkey v1, or recompile the exe yourself.
 3.  **Graphics (PNGs):** The folders **`builder/`, `wall/`, `gold/`, `elexier/`, `popup/`** must be present in the script's root directory and contain the corresponding `.png` images used for precise object recognition (ImageSearch).
 4.  **Attack Macro:** The file **`Attack.exe`** (your custom attack recording) must be in the same directory.
@@ -81,8 +84,24 @@ Every run writes a log to `logs\log_<date>_<time>.txt`. Failed searches are name
 | `IMAGE ERROR: could not search for <file>` | The PNG could not be opened or read at all. Wrong path, broken file, or an unsupported format. A tooltip also warns about this, because waiting will not fix it. |
 | `Search skipped: emulator window not available.` | The Clash of Clans window is closed, minimized, or no longer matches `TargetWin`. |
 | `Start refused: emulator window not found` | `F2` was pressed while the game was not open. Nothing was started. |
+| `STOP: emulator window moved or was resized (...)` | The window is no longer where it was when you pressed `F2`. Put it back or press `F2` again to take a fresh measurement. |
+| `STOP: refused to aim at X/Y ...  outside the emulator window` | A coordinate from the configuration block does not fit your window. See `ConfirmClickX` / `ConfirmClickY` in the script and re-measure them with `F9`. |
+| `STOP: refused to click ...  another window covers that point` | Something was in front of the game. Nothing was clicked. |
+| `STOP: no Back-to-Home popup for 300 s` | The game is showing something the bot cannot read: an ad, a disconnect, a loading screen. |
+| `STOP: Attack.exe still running after 180 s` | The attack macro did not finish by itself and was killed. |
+| `IMAGE SETUP ERROR: no PNG found for group(s)` | One of the image folders is missing or empty. The bot refuses to start, because a group without images can never be found. |
 
 Repeated identical lines are written only once, so a long wait does not flood the log.
+
+### ✅ Self check
+
+`selfcheck.ahk` runs the decision logic of `logic.ahk` against made-up inputs and prints one line per case. It needs no emulator and clicks nothing:
+
+```powershell
+& "<path to AutoHotkey v1 exe>" .\selfcheck.ahk | Out-Host
+```
+
+Exit code 0 means everything passed. The last section really calls `ImageSearch` to confirm that every PNG in the repo can be searched for with the tolerance the bot uses. Anything that needs the running game (finding a wall, clicking a builder) cannot be checked this way and is not pretended to be.
 
 ---
 
