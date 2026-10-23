@@ -7,6 +7,10 @@ CoordMode, Pixel, Screen
 CoordMode, Mouse, Screen
 SetTitleMatchMode, 2
 
+; Pure decision logic (no screen, no window): GetTolerance, JoinImages,
+; LoadImagePaths. Kept separate so selfcheck.ahk can call the same code the bot runs.
+#Include %A_ScriptDir%\logic.ahk
+
 ; === Log Initialization ===
 logFilePath := InitLogging()
 
@@ -17,7 +21,7 @@ TargetWin := "ahk_class CROSVM_1 ahk_exe crosvm.exe"
 images := {}
 image_groups := ["builder", "wall", "gold", "elexier", "popup"]
 
-images := LoadImagePaths(image_groups)
+images := LoadImagePaths(image_groups, A_ScriptDir)
 
 
 
@@ -317,34 +321,6 @@ ClickImageInGroup(imageList, timeout := 0, offsetX := 0, offsetY := 0, tolerance
     }
 }
 
-; Joined with " / " on purpose: this string is also passed to ToolTip, whose text
-; parameter would treat a comma as the start of the X coordinate.
-JoinImages(imageList) {
-    out := ""
-    for _, image in imageList
-        out .= (out = "" ? "" : " / ") . image
-    return out
-}
-
-GetTolerance(imageFile) {
-    ; ImageSearch accepts *0 to *255 only. Anything outside that range is a badly
-    ; formatted option and makes the search fail with ErrorLevel 2.
-    if InStr(imageFile, "wall") || InStr(imageFile, "mauer") {
-        return "*130"
-    }
-    else if InStr(imageFile, "gold") || InStr(imageFile, "elexier") {
-        return "*100"
-    }
-    else if InStr(imageFile, "builder") {
-        return "*60"
-    }
-    else {
-        return "*30"
-    }
-}
-
-
-
 ; === Image Search with Window Context (F3-F6) ===
 CheckImageGroupWithPopup(groupName) {
     global images, TargetWin
@@ -394,19 +370,6 @@ RemoveToolTip:
 return
 
 
-
-LoadImagePaths(groups) {
-    local loaded_images := {}
-    for _, groupName in groups
-    {
-        loaded_images[groupName] := []
-        Loop, Files, %A_ScriptDir%\%groupName%\*.png
-        {
-            loaded_images[groupName].Push(groupName . Chr(92) . A_LoopFileName)
-        }
-    }
-    return loaded_images
-}
 
 ExitAppWithKill() {
     Log("Exit hotkey pressed. Killing Attack.exe and exiting script.")
