@@ -25,12 +25,12 @@ images := LoadImagePaths(image_groups)
 ; === Status Variables ===
 MonitoringActive := false
 runCounter := 0 ; Counts the runs until the upgrade cycle
-popupSearchState := "" ; Prevents log spam during popup search
+lastLogMessage := "" ; Suppresses identical consecutive log lines (polling spam)
 
 ; === Hotkeys ===
 F2::ToggleScript()
 F3::
-    MsgBox, 64, COC Popup Monitor - Help, Script Hotkeys:`n`n• F2 - Start/Stop `n• F3 - Show this help`n• F4 - Test wall Images`n• F5 - Test Gold Images`n• F6 - Test Elexier Images`n• F7 - Test Builder Images`n• F8 - Test Popup Images`n• ESC - Exit script (kills COC macro)`n`nNotes:`n- Make sure "popup.png" is in script folder`n- Works on all monitors`n- COC macro gets killed when stopping/exiting
+    MsgBox, 64, COC Popup Monitor - Help, Script Hotkeys:`n`n• F2 - Start/Stop `n• F3 - Show this help`n• F4 - Test wall Images`n• F5 - Test Gold Images`n• F6 - Test Elexier Images`n• F7 - Test Builder Images`n• F8 - Test Popup Images`n• ESC - Exit script (kills COC macro)`n`nNotes:`n- Make sure "popup.png" is in script folder`n- F2 only starts when the COC window is open`n- Searches are limited to the COC window, not the whole desktop`n- Every failed search names the image in logs\`n- Works on all monitors`n- COC macro gets killed when stopping/exiting
 return
 F4::CheckImageGroupWithPopup("wall")
 F5::CheckImageGroupWithPopup("gold")
@@ -48,7 +48,17 @@ Esc::ExitAppWithKill()
 
 ; === Script Start/Stop with F2 ===
 ToggleScript() {
-    global MonitoringActive
+    global MonitoringActive, TargetWin
+
+    ; Refuse to start unless the emulator window is really there. Without this the
+    ; routine searched the whole desktop and clicked whatever happened to match.
+    if (!MonitoringActive && !WinExist(TargetWin)) {
+        Log("Start refused: emulator window not found (" . TargetWin . ").")
+        ToolTip, ❌ Clash of Clans window not found - script not started
+        SetTimer, RemoveToolTip, 3000
+        return
+    }
+
     MonitoringActive := !MonitoringActive
 
     RunWait, taskkill /F /IM "Attack.exe", , Hide
@@ -56,7 +66,7 @@ ToggleScript() {
 
     if (MonitoringActive) {
         Log("Script enabled.")
-        ToolTip, ✅ Macro activated
+        ToolTip, ✅ Macro activated - waiting for the Back-to-Home button
         SetTimer, StartRoutine, 1000
     } else {
         Log("Script disabled.")
@@ -69,26 +79,16 @@ ToggleScript() {
 ; === Main Routine ===
 StartRoutine:
     global runCounter
-    Log("--- Starting new routine cycle ---")
 
-    ; 1. ALWAYS wait for and click the initial popup first
-    if (popupSearchState != "waiting") {
-        Log("Searching for popup...")
+    ; 1. ALWAYS wait for and click the initial popup first.
+    ;    ClickImageInGroup only clicks when the image was actually found.
+    ;    Nothing is logged before this point, so a long wait leaves one line in the
+    ;    log ("Not found: popup\...") instead of two per second.
+    if !ClickImageInGroup(images["popup"], 0, 10, 10) {
+        return ; Ends the routine if no popup is found - nothing was clicked
     }
 
-    if !ImageFoundInGroup(images["popup"], x, y) {
-        if (popupSearchState != "waiting") {
-            popupSearchState := "waiting"
-            Log("Popup not found. Quietly waiting for it to appear...")
-        }
-        return ; Ends the routine if no popup is found
-    }
-
-    popupSearchState := "found" ; Reset, because popup was found
-    Log("Popup found and clicked.")
-    xOffset := x + 10
-    yOffset := y + 10
-    Click, %xOffset%, %yOffset%
+    Log("--- Popup found and clicked, starting cycle (run " . runCounter . ") ---")
     Sleep, 500
 
     runCounter++ ; Increment counter
@@ -102,10 +102,12 @@ StartRoutine:
 
         ; 2. Single, continuous loop for the upgrade cycle
         Loop {
+            if (!MonitoringActive)
+                break ; F2 was pressed while this cycle was running
+
             ; --- Search for builder ---
             Log("Searching for a free builder...")
-            Tolerance := GetTolerance("builder.png")
-            if !WaitForImageClick(images["builder"], 30000, Tolerance) {
+            if !ClickImageInGroup(images["builder"], 30000) {
                 Log("No free builder found within 30s. Breaking upgrade loop.")
                 break ; No builder found, exit loop
             }
@@ -115,14 +117,13 @@ StartRoutine:
             ; --- Move mouse down ---
             MouseMove, 0, 200, 0, R
             Sleep, 300
-            
+
             ; --- Search for wall (with scrolling) ---
             Log("Searching for a wall...")
-            Tolerance := GetTolerance("wall.png")
             ScrollAttempts := 0
             wallFound := false
             Loop {
-                if WaitForImageClick(images["wall"], 400, Tolerance) {
+                if ClickImageInGroup(images["wall"], 400) {
                     wallFound := true
                     Log("Wall found and clicked.")
                     break
@@ -151,16 +152,18 @@ StartRoutine:
                 goldAndElexier.Push(img)
             }
 
-            if !WaitForEitherClick(goldAndElexier, 5000) {
+            if !ClickImageInGroup(goldAndElexier, 5000) {
                 Log("No Gold or Elixir button found. Breaking upgrade loop.")
                 break ; No resources found, exit loop
             }
-            else{
-                Sleep, 500
-                Click, 1300, 925
-                Sleep, 400
-            }
             Log("Resource found and clicked.")
+
+            ; Confirm dialog. ponytail: still a fixed coordinate, no image exists for
+            ; this button yet. Add a confirm/*.png group and route it through
+            ; ClickImageInGroup when it misfires.
+            Sleep, 500
+            Click, 1300, 925
+            Sleep, 400
             Log("Upgrade initiated. Looping back to find next builder.")
             
             ; The loop starts over (searches for builder again)
@@ -183,78 +186,150 @@ StartRoutine:
 return
 
 WaitForPopupAndRestart() {
-    global images, popupSearchState
+    global images, MonitoringActive
     Log("Now waiting for the popup to restart the main loop...")
     Loop {
-        if ImageFoundInGroup(images["popup"], x, y) {
+        ; Honour a stop. SetTimer ... Off does not abort a running thread, so without
+        ; this check a stopped script re-armed its own timer and carried on clicking.
+        if (!MonitoringActive) {
+            Log("Stop requested. Not restarting the main routine.")
+            return
+        }
+        if FindImageInGroup(images["popup"], x, y) {
             Log("Popup found. Restarting main routine.")
-            popupSearchState := "" ; Reset state
             SetTimer, StartRoutine, 1000 ; Reactivate timer
-            break
+            return
         }
         Sleep, 1000 ; Wait 1 second between search attempts
     }
 }
 
 RunAngriff() {
+    global MonitoringActive, TargetWin
+    ; Both call sites come from an already running thread that F2 cannot abort, so the
+    ; stop has to be honoured here, before the macro sends any input.
+    if (!MonitoringActive) {
+        Log("Attack skipped: script was stopped.")
+        return
+    }
+    if !WinExist(TargetWin) {
+        Log("Attack skipped: emulator window is gone.")
+        return
+    }
     Log("Executing Attack.exe")
     Run, Attack.exe
     Sleep, 15000
     Log("Attack.exe should be finished.")
 }
 
-ImageFoundInGroup(images, ByRef x := "", ByRef y := "", tolerance := "*30") {
-    for _, image in images {
-        ImageSearch, foundX, foundY, 0, 0, A_ScreenWidth, A_ScreenHeight, %tolerance% %A_ScriptDir%\%image%
-        if (!ErrorLevel) {
-            x := foundX
-            y := foundY
-            return true
-        }
+; ===================================================================================
+; === Image search - THE ONLY PLACE THAT CALLS ImageSearch OR CLICKS A RESULT ========
+; ===================================================================================
+; AutoHotkey v1 ImageSearch sets ErrorLevel: 0 = found, 1 = not found,
+; 2 = search could not be conducted (file unreadable, or a badly formatted option).
+; Only 0 may be treated as a hit. On 1 the output variables are blanked by AHK, on 2
+; they are not touched at all - which is how a click used to land on the coordinates
+; of a previous, unrelated find.
+
+; Search region = the emulator window, never the whole desktop.
+; Returns false when the window is gone, so no search can run against the desktop.
+SearchRect(ByRef x1, ByRef y1, ByRef x2, ByRef y2) {
+    global TargetWin
+    if !WinExist(TargetWin)
+        return false
+    ; A minimized window reports off-screen coordinates and ImageSearch needs the
+    ; region to be visible, so there is nothing to search.
+    WinGet, winState, MinMax, %TargetWin%
+    if (winState = -1)
+        return false
+    WinGetPos, wx, wy, ww, wh, %TargetWin%
+    if (ww = "" || wh = "" || ww < 1 || wh < 1)
+        return false
+    x1 := wx
+    y1 := wy
+    x2 := wx + ww
+    y2 := wy + wh
+    return true
+}
+
+; Single search. Fills foundX/foundY ONLY on a real hit; blanks them otherwise, so a
+; caller that ignores the return value cannot reuse a stale coordinate.
+FindImage(image, ByRef foundX, ByRef foundY, tolerance := "") {
+    foundX := ""
+    foundY := ""
+
+    if !SearchRect(x1, y1, x2, y2) {
+        Log("Search skipped: emulator window not available.")
+        return false
+    }
+    if (tolerance = "")
+        tolerance := GetTolerance(image)
+
+    ImageSearch, hitX, hitY, x1, y1, x2, y2, %tolerance% %A_ScriptDir%\%image%
+    el := ErrorLevel
+
+    if (el = 0) {
+        foundX := hitX
+        foundY := hitY
+        return true
+    }
+    if (el != 1) {
+        ; ErrorLevel 2: the file could not be opened or the options are malformed.
+        ; Loud, because this never fixes itself by waiting.
+        Log("IMAGE ERROR: could not search for " . image . " (tolerance " . tolerance . "). File missing or unreadable?")
+        ToolTip, ⚠️ Image error: %image%
+        SetTimer, RemoveToolTip, 4000
     }
     return false
 }
 
-ImageFound(image, ByRef x := "", ByRef y := "", tolerance := "*30") {
-    ImageSearch, x, y, 0, 0, A_ScreenWidth, A_ScreenHeight, %tolerance% %A_ScriptDir%\%image%
-    return !ErrorLevel
+; Search a whole group. Same contract: coordinates only on a hit.
+FindImageInGroup(imageList, ByRef foundX, ByRef foundY, tolerance := "") {
+    foundX := ""
+    foundY := ""
+    for _, image in imageList {
+        if FindImage(image, foundX, foundY, tolerance)
+            return true
+    }
+    return false
 }
 
-WaitForImageClick(images, timeout, tolerance := "*30") {
+; Wait up to `timeout` ms for any image of the group and click it. The click lives in
+; here, so no call site ever holds a coordinate it has to validate itself.
+; timeout 0 = single attempt. Returns false without clicking anything.
+ClickImageInGroup(imageList, timeout := 0, offsetX := 0, offsetY := 0, tolerance := "") {
+    global MonitoringActive
     start := A_TickCount
     Loop {
-        if ImageFoundInGroup(images, x, y, tolerance) {
+        if FindImageInGroup(imageList, foundX, foundY, tolerance) {
             Sleep, 500
-            Click, %x%, %y%
+            clickX := foundX + offsetX
+            clickY := foundY + offsetY
+            Click, %clickX%, %clickY%
             Sleep, 500
             return true
         }
-        if (A_TickCount - start > timeout)
+        if (!MonitoringActive || A_TickCount - start >= timeout) {
+            Log("Not found: " . JoinImages(imageList))
             return false
+        }
         Sleep, 300
     }
 }
 
-WaitForEitherClick(images, timeout) {
-    start := A_TickCount
-    Loop {
-        for _, img in images {
-            Tolerance := GetTolerance(img)
-            if ImageFound(img, x, y, Tolerance) {
-                Sleep, 700 ; Short delay before the click
-                Click, %x%, %y% ; Click on the found Gold/Elixir image
-                Sleep, 700
-                return true
-            }
-        }
-        if (A_TickCount - start > timeout)
-            return false
-        Sleep, 300
-    }
+; Joined with " / " on purpose: this string is also passed to ToolTip, whose text
+; parameter would treat a comma as the start of the X coordinate.
+JoinImages(imageList) {
+    out := ""
+    for _, image in imageList
+        out .= (out = "" ? "" : " / ") . image
+    return out
 }
 
 GetTolerance(imageFile) {
-    if InStr(imageFile, "wall") {
+    ; ImageSearch accepts *0 to *255 only. Anything outside that range is a badly
+    ; formatted option and makes the search fail with ErrorLevel 2.
+    if InStr(imageFile, "wall") || InStr(imageFile, "mauer") {
         return "*130"
     }
     else if InStr(imageFile, "gold") || InStr(imageFile, "elexier") {
@@ -264,7 +339,7 @@ GetTolerance(imageFile) {
         return "*60"
     }
     else {
-        return "*600"
+        return "*30"
     }
 }
 
@@ -284,15 +359,12 @@ CheckImageGroupWithPopup(groupName) {
         return
     }
 
-    WinGetPos, X, Y, W, H, %TargetWin%
-    
+    ; Same helper and the same tolerances the main routine uses, so a green test
+    ; actually means the main routine will find it too.
     found := false
     for _, imageFile in images[groupName] {
-        Tolerance := GetTolerance(imageFile)
-        ImageSearch, FoundX, FoundY, X, Y, X+W, Y+H, %Tolerance% %A_ScriptDir%\%imageFile%
-        
-        if (ErrorLevel = 0) {
-            ToolTip, ✅ %imageFile% found at %FoundX%, %FoundY%
+        if FindImage(imageFile, FoundX, FoundY) {
+            ToolTip, ✅ %imageFile% found at %FoundX%`, %FoundY%
             Gui, +AlwaysOnTop -Caption +ToolWindow
             Gui, Color, Red
             Gui, Add, Text, x0 y0 w80 h20 Center BackgroundTrans cWhite, ✔ Found
@@ -304,7 +376,9 @@ CheckImageGroupWithPopup(groupName) {
     }
 
     if (!found) {
-        ToolTip, ❌ No image from group '%groupName%' found.
+        tried := JoinImages(images[groupName])
+        Log("Test '" . groupName . "': nothing found. Tried: " . tried)
+        ToolTip, ❌ No image from group '%groupName%' found: %tried%
     }
     SetTimer, RemoveToolTip, 3000
 }
@@ -342,18 +416,25 @@ ExitAppWithKill() {
 
 ; === Logging Functions ===
 InitLogging() {
+    global logFilePath
     logDir := A_ScriptDir . "\logs"
     if !FileExist(logDir)
         FileCreateDir, %logDir%
-    
+
     FormatTime, time, , yyyy-MM-dd_HH-mm-ss
-    path := logDir . "\log_" . time . ".txt"
-    Log("Logging initialized. Log file: " . path)
-    return path
+    ; Set the global BEFORE logging - otherwise the first line goes nowhere.
+    logFilePath := logDir . "\log_" . time . ".txt"
+    Log("Logging initialized. Log file: " . logFilePath)
+    return logFilePath
 }
 
 Log(message) {
-    global logFilePath
+    global logFilePath, lastLogMessage
+    if (logFilePath = "")
+        return
+    if (message = lastLogMessage)
+        return ; Identical consecutive line: a poll that is still waiting, not news
+    lastLogMessage := message
     FormatTime, time, , HH:mm:ss
     FileAppend, %time% - %message%`n, %logFilePath%
 }

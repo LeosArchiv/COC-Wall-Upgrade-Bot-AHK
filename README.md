@@ -12,8 +12,11 @@ The script operates in a continuous, automated loop, designed to run until manua
 
 The script does **not** start immediately upon launch. It is designed to wait for the appearance of the "Back to Home" button, which signifies the end of an attack.
 
+* **Window Required:** `F2` only starts the script if the Clash of Clans window is actually open. If it is not, nothing starts and a tooltip says so. This prevents the script from searching your desktop and clicking whatever happens to look similar.
 * **Initial Requirement:** The user must manually start one Clash of Clans attack (and either finish it or surrender) to trigger the initial "Back to Home" button.
 * **Loop Start:** The script constantly searches for the **`popup.png`** (the "Back to Home" button). Once found, it clicks the button, waits briefly for the village to load, and the main automated loop begins.
+* **No Blind Clicks:** Every click on a game element happens only after that element was actually found on screen. If nothing is found, the script waits and clicks nothing.
+* **Window Must Stay Visible:** All image searches are limited to the Clash of Clans window. The window may sit on any monitor, but it must not be minimized or fully covered by another window, because ImageSearch can only see what is visible on screen.
 
 ### 2. Main Automated Cycle
 
@@ -21,7 +24,7 @@ The core automation combines two phases:
 
 #### 2.1 Attack Cycle (Farming)
 
-* The script executes the separate macro **`Attack.exe`** (your custom attack recording) consecutively a set number of times (currently configured for **10 runs**) to gather Gold and Elixir.
+* The script executes the separate macro **`Attack.exe`** (your custom attack recording) consecutively a set number of times (currently configured for **6 runs**, see `runCounter >= 6` in the script) to gather Gold and Elixir.
 * After each run, it waits for the **`popup.png`** to reappear and clicks it to return to the village before launching the next attack.
 
 #### 2.2 Upgrade Cycle (Spending)
@@ -62,10 +65,25 @@ For the script to function correctly, precise image recognition is required. The
 1.  **Game Platform:** The script is specifically designed for **Clash of Clans (COC) running through Google Play Games for PC**.
     * It targets the window handle **`ahk_class CROSVM_1 ahk_exe crosvm.exe`**, which is the default name used by Google Play Games for the COC window.
     * If you experience issues, you may need to confirm this window title is correct on your system and adjust the `TargetWin` variable in the code.
-2.  **AutoHotkey:** The main script file (`COC-Wall-Upgrade-Bot.ahk`) requires **AutoHotkey v1** to run.
+2.  **AutoHotkey:** The main script file (`COC_wall_upgrade_script.ahk`) requires **AutoHotkey v1** to run. It will not run under AutoHotkey v2.
+    * **The committed `COC_wall_upgrade_script.exe` is an older compiled build and does not contain current fixes.** Run the `.ahk` file with AutoHotkey v1, or recompile the exe yourself.
 3.  **Graphics (PNGs):** The folders **`builder/`, `wall/`, `gold/`, `elexier/`, `popup/`** must be present in the script's root directory and contain the corresponding `.png` images used for precise object recognition (ImageSearch).
 4.  **Attack Macro:** The file **`Attack.exe`** (your custom attack recording) must be in the same directory.
 5.  **No Star Bonus:** Make sure you cant collect any 5 stars star bonus, or else the script could crash!
+
+### 🔍 Troubleshooting
+
+Every run writes a log to `logs\log_<date>_<time>.txt`. Failed searches are named there, so you can see exactly which image was not found instead of guessing:
+
+| Log line | Meaning |
+| :--- | :--- |
+| `Not found: wall\mauer.png / wall\mauer1.png / ...` | The search ran correctly, none of those images matched. Retake the screenshots for that folder. |
+| `IMAGE ERROR: could not search for <file>` | The PNG could not be opened or read at all. Wrong path, broken file, or an unsupported format. A tooltip also warns about this, because waiting will not fix it. |
+| `Search skipped: emulator window not available.` | The Clash of Clans window is closed, minimized, or no longer matches `TargetWin`. |
+| `Start refused: emulator window not found` | `F2` was pressed while the game was not open. Nothing was started. |
+
+Repeated identical lines are written only once, so a long wait does not flood the log.
+
 ---
 
 ### Download Links:
@@ -88,7 +106,7 @@ This script is controlled via a set of hotkeys. Make sure the script is running 
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
-| **`F2`** | **Start / Stop Script** | Toggles the main automation loop on and off. A tooltip will confirm the status. |
+| **`F2`** | **Start / Stop Script** | Toggles the main automation loop on and off. A tooltip will confirm the status. Starting requires the Clash of Clans window to be open; stopping also aborts a cycle that is already running. |
 | **`F3`** | **Show Help** | Displays a message box with a list of all hotkeys. |
 | **`F4`** | **Test Wall Images** | Searches for the `wall` (wall) images on screen. |
 | **`F5`** | **Test Gold Images** | Searches for the `gold` upgrade button images. |
